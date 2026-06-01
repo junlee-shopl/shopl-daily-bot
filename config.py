@@ -14,7 +14,8 @@ load_dotenv()
 KST = pytz.timezone("Asia/Seoul")
 
 # --- 샤플 API ---
-SHOPL_API_BASE_URL = os.getenv("SHOPL_API_BASE_URL", "")
+# base URL은 공개 호스트 (비밀 아님). 키만 .env로 관리.
+SHOPL_API_BASE_URL = os.getenv("SHOPL_API_BASE_URL", "https://api.shoplworks.com")
 SHOPL_API_KEY = os.getenv("SHOPL_API_KEY", "")
 
 # --- 고위드 Open API ---
