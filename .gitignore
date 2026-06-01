@@ -1,0 +1,24 @@
+# 환경변수
+.env
+.env.local
+.env.*.local
+
+# 디버깅용 데이터 (API 응답 캐시)
+tests/fixtures/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
