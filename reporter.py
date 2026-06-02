@@ -79,6 +79,29 @@ def _len(x) -> int:
     return len(x) if isinstance(x, list) else 0
 
 
+# 안전망: 모델이 비위반 건을 issues에 넣고 reason에 "정상/위반 아님" 등으로
+# 자가정정하는 경우가 있어, 이런 단서가 든 항목은 issue에서 제외한다.
+_NON_VIOLATION_MARKERS = (
+    "위반 아님", "위반아님", "해당 없음", "해당없음", "해당 안", "미해당",
+    "정상", "제거", "재확인", "경계값", "대상 외", "대상외", "아닙니다", "아님",
+)
+
+
+def _is_real_issue(it: dict) -> bool:
+    reason = str(it.get("reason", "")) if isinstance(it, dict) else ""
+    return not any(m in reason for m in _NON_VIOLATION_MARKERS)
+
+
+def _filter_issues(analysis: dict) -> dict:
+    """lunch.issues에서 비위반(자가정정) 항목 제거. 원본 보존 위해 얕은 복사."""
+    lunch = dict(analysis.get("lunch") or {})
+    issues = [it for it in (lunch.get("issues") or []) if _is_real_issue(it)]
+    lunch["issues"] = issues
+    a = dict(analysis)
+    a["lunch"] = lunch
+    return a
+
+
 # ---------- 섹션 빌더 ----------
 
 def _deposit_section(dep: dict) -> list:
@@ -267,6 +290,7 @@ def _issue_counts(analysis: dict) -> dict:
 
 def generate(analysis: dict) -> str:
     """분석 결과 dict → 일보 텍스트."""
+    analysis = _filter_issues(analysis)
     target_date = analysis.get("date") or config.yesterday_str()
     try:
         report_d = datetime.strptime(target_date[:10], "%Y-%m-%d") + timedelta(days=1)
