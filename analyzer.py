@@ -146,7 +146,8 @@ def analyze(raw_data: dict) -> dict:
     )
 
     try:
-        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        # max_retries 상향: 일시적 529(Overloaded)/429에 cron이 빈 일보 내지 않도록.
+        client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, max_retries=5)
         resp = client.messages.create(
             model=config.ANTHROPIC_MODEL,
             max_tokens=_MAX_TOKENS,

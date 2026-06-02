@@ -27,19 +27,17 @@ from storage import save_fixture
 _TIMEOUT = 30
 
 
-def _headers() -> dict:
-    # 샤플은 커스텀 헤더 authKey 에 API Key 원문을 넣는다 (Bearer 등 접두사 없음).
-    return {"authKey": config.SHOPL_API_KEY, "Accept": "application/json"}
-
-
 def _get(path: str, params: dict | None = None) -> dict:
     url = f"{config.SHOPL_API_BASE_URL.rstrip('/')}{path}"
-    resp = requests.get(url, headers=_headers(), params=params or {}, timeout=_TIMEOUT)
+    # 샤플은 authKey를 쿼리 파라미터로 받는다 (헤더 아님 — 검증: query 방식만 SUCCESS).
+    q = {**(params or {}), "authKey": config.SHOPL_API_KEY}
+    resp = requests.get(url, params=q, headers={"Accept": "application/json"}, timeout=_TIMEOUT)
     resp.raise_for_status()
     data = resp.json()
     # statusCode 는 header 안 또는 최상위에 올 수 있다 (엔드포인트별 봉투 차이).
+    # 엔드포인트마다 'SUCCESS'/'Success' 등 대소문자가 달라 case-insensitive 비교.
     status = (data.get("header") or {}).get("statusCode") or data.get("statusCode")
-    if status and status != "SUCCESS":
+    if status and str(status).upper() != "SUCCESS":
         raise RuntimeError(f"Shopl statusCode={status} ({path})")
     return data
 
