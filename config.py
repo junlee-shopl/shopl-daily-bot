@@ -4,12 +4,20 @@
 """
 
 import os
+import sys
 from datetime import datetime, timedelta
 
 import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Windows 콘솔(cp949)에서도 이모지/한글 입출력이 깨지지 않도록 UTF-8 고정.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 KST = pytz.timezone("Asia/Seoul")
 
