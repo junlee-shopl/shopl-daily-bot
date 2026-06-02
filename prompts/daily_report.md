@@ -43,8 +43,9 @@
 - 비고: 점심식대 카테고리에 외부 인원 → 접대비/회식비 분류 검토 대상
 
 #### 룰 5. 중복 점심 의심
-- 조건: 같은 날, 한 사람이 두 개 이상의 점심 식대 결제에 등장
-- 등장 기준: 결제자 본인 + participants 명단의 union
+- 조건: 같은 날, 한 사람이 **점심식대 카테고리 결제 2건 이상**에 등장
+- 등장 기준: (점심식대 결제 건들에 한해) 결제자 본인 + participants 명단의 union
+- **교통비 등 점심 외 카테고리는 중복 계산에서 제외한다. 점심식대 결제에 1번만 등장하는 사람은 절대 duplicate_lunch가 아니다.**
 - type: "duplicate_lunch"
 - 대상자 표시: 중복 등장한 사람 이름
 
@@ -89,17 +90,44 @@
 
 ## 출력 스키마
 
-분석 결과는 submit_daily_analysis 도구를 호출하여 제출한다. 다음 구조를 따른다:
+분석 결과는 submit_daily_analysis 도구를 호출하여 제출한다.
+
+**중요 — 항목 필드명 규칙:**
+- 입력 데이터의 원본 필드명(userName, usedAt, attendanceTime, accIn, remark1 등)을 그대로 쓰지 말고, 아래에 정의된 **표준 필드명**으로 변환해서 넣는다.
+- 모든 시각은 "HH:MM"(24시간제, 날짜 제외)으로 변환한다. 예: "2026-06-01 12:15" → "12:15".
+- 이름은 영어이름(userName)을 그대로 쓴다.
+- issues/항목 배열에는 **실제 해당하는 건만** 넣는다. 해당 없으면 빈 배열.
+
+전체 구조:
 
 {
   "date": "YYYY-MM-DD",
-  "summary": { "total_issues": <int>, "by_category": {...} },
-  "deposit": { "matched": {...}, "unmatched": [...] },
-  "lunch": { "normal": {...}, "issues": [...] },
-  "non_lunch": { "transport": [...], "entertainment": [...], "other": [...] },
-  "attendance": { "over_12h": [...], "under_9h": [...], "late": [...], "no_show_no_leave": [...] },
-  "leaves": { "yesterday": [...], "today_planned": [...], "pending_approval": [...] },
-  "attendance_summary": {...}
+  "summary": { "total_issues": <int>, "by_category": { "deposit":<int>,"lunch":<int>,"non_lunch":<int>,"attendance":<int>,"leaves":<int> } },
+  "deposit": {
+    "matched": { "count": <int>, "total": <int> },
+    "unmatched": [ { "depositor": "<입금자명>", "amount": <int>, "time": "HH:MM" } ]
+  },
+  "lunch": {
+    "normal": { "count": <int>, "total": <int>, "avg_per_person": <int> },
+    "issues": [ { "type": "<룰 type>", "user": "<영어이름>", "time": "HH:MM", "amount": <int>, "participants": ["..."], "reason": "<한 줄 설명>" } ]
+  },
+  "non_lunch": {
+    "transport":     [ { "user": "<영어이름>", "time": "HH:MM", "merchant": "<가맹점>", "amount": <int>, "memo": "<메모 또는 빈 문자열>" } ],
+    "entertainment": [ { "user": "...", "time": "HH:MM", "merchant": "...", "amount": <int>, "memo": "..." } ],
+    "other":         [ { "user": "...", "time": "HH:MM", "merchant": "...", "amount": <int>, "memo": "..." } ]
+  },
+  "attendance": {
+    "over_12h":         [ { "user": "<영어이름>", "in": "HH:MM", "out": "HH:MM", "duration": "<예: 14h 02m>", "note": "<비고>" } ],
+    "under_9h":         [ { "user": "...", "in": "HH:MM", "out": "HH:MM", "duration": "...", "note": "<예: 오후 반차(정상)>" } ],
+    "late":             [ { "user": "...", "in": "HH:MM", "note": "<예: 35분 지각>" } ],
+    "no_show_no_leave": [ { "user": "...", "note": "<비고>" } ]
+  },
+  "leaves": {
+    "yesterday":        [ { "user": "<영어이름>", "leave_type": "<예: 연차>" } ],
+    "today_planned":    [ { "user": "...", "leave_type": "...", "pending": <true/false> } ],
+    "pending_approval": [ { "user": "...", "leave_type": "..." } ]
+  },
+  "attendance_summary": { "normal": <int>, "leave": <int>, "field": <int>, "no_show": <int> }
 }
 
 도구 호출 외의 설명 텍스트는 출력하지 않는다.
