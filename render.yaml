@@ -1,0 +1,39 @@
+services:
+  - type: cron
+    name: shopl-daily-bot
+    runtime: python
+    plan: starter  # 또는 free
+    schedule: "0 0 * * *"  # UTC 00:00 = KST 09:00
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: SHOPL_API_BASE_URL
+        sync: false
+      - key: SHOPL_API_KEY
+        sync: false
+      - key: GOWID_API_BASE_URL
+        sync: false
+      - key: GOWID_API_KEY
+        sync: false
+      - key: POPBILL_LINK_ID
+        sync: false
+      - key: POPBILL_SECRET_KEY
+        sync: false
+      - key: POPBILL_CORP_NUM
+        sync: false
+      - key: POPBILL_BANK_CODE
+        value: "0003"
+      - key: POPBILL_ACCOUNT_NUM
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-4-6
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_CHANNEL
+        sync: false
+      - key: TZ
+        value: Asia/Seoul
+      - key: DRY_RUN
+        value: "false"
