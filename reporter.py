@@ -3,6 +3,15 @@
 analyzer.py의 구조화 결과만 받아 텍스트로 변환한다 (분석 로직 없음).
 포맷을 바꾸고 싶으면 이 파일만 수정.
 
+출력 구조 (모바일 부담 완화):
+  - build() → (parent_text, [section_text, ...])
+    parent_text = 채널에 뜨는 메인 메시지 (타이틀 + 점검 요약만, 짧게)
+    section_text 리스트 = 스레드에 섹션별 개별 메시지로 달릴 상세
+  - generate()는 둘을 합친 단일 텍스트 (하위호환 / fallback용)
+
+긴 구분선(━)은 모바일에서 줄바뀜이 심해 제거하고, 섹션 제목을 *볼드* 헤더로 쓴다.
+섹션이 스레드에서 개별 메시지로 분리되므로 섹션 사이 구분선 자체가 불필요하다.
+
 이슈 객체는 LLM이 채우므로 키가 다소 유동적일 수 있다 → 방어적으로 렌더링한다
 (없는 키는 건너뛰고, 절대 예외로 죽지 않는다).
 
@@ -16,7 +25,6 @@ from datetime import datetime, timedelta
 
 import config
 
-_DIV = "━" * 27
 _KWEEK = ["월", "화", "수", "목", "금", "토", "일"]
 
 
@@ -105,7 +113,7 @@ def _filter_issues(analysis: dict) -> dict:
 # ---------- 섹션 빌더 ----------
 
 def _deposit_section(dep: dict) -> list:
-    lines = [_DIV, "💰 입금 점검", _DIV]
+    lines = ["*💰 입금 점검*"]
     matched = dep.get("matched") or {}
     m_cnt = matched.get("count", 0)
     m_total = matched.get("total", 0)
@@ -125,7 +133,7 @@ def _deposit_section(dep: dict) -> list:
 
 
 def _lunch_section(lunch: dict) -> list:
-    lines = [_DIV, "🍱 점심 식대 점검", _DIV]
+    lines = ["*🍱 점심 식대 점검*"]
     normal = lunch.get("normal") or {}
     n_cnt = normal.get("count", 0)
     n_total = normal.get("total", 0)
@@ -174,7 +182,7 @@ def _lunch_section(lunch: dict) -> list:
 
 
 def _non_lunch_section(nl: dict) -> list:
-    lines = [_DIV, "💳 점심 외 카드 사용", _DIV,
+    lines = ["*💳 점심 외 카드 사용*",
              "법인카드는 점심 식대 명목으로 배부됨. 점심 외 사용은 검토 대상."]
     buckets = [("transport", "교통비 / 낮시간"),
                ("entertainment", "회식·접대"),
@@ -210,7 +218,7 @@ def _non_lunch_section(nl: dict) -> list:
 
 
 def _attendance_section(att: dict) -> list:
-    lines = [_DIV, "⏰ 근태 점검", _DIV]
+    lines = ["*⏰ 근태 점검*"]
     blocks = [("over_12h", "12시간 이상 근무"),
               ("under_9h", "9시간 미만 근무"),
               ("late", "지각"),
@@ -244,7 +252,7 @@ def _attendance_section(att: dict) -> list:
 
 
 def _leaves_section(lv: dict) -> list:
-    lines = [_DIV, "🏖️ 휴가 현황", _DIV]
+    lines = ["*🏖️ 휴가 현황*"]
 
     def _fmt(rows):
         out = []
@@ -264,7 +272,7 @@ def _leaves_section(lv: dict) -> list:
 
 
 def _summary_section(att_sum: dict) -> list:
-    lines = [_DIV, "📊 출근 요약", _DIV]
+    lines = ["*📊 출근 요약*"]
     normal = att_sum.get("normal", 0)
     leave = att_sum.get("leave", 0)
     field = att_sum.get("field", 0)
@@ -288,9 +296,8 @@ def _issue_counts(analysis: dict) -> dict:
     }
 
 
-def generate(analysis: dict) -> str:
-    """분석 결과 dict → 일보 텍스트."""
-    analysis = _filter_issues(analysis)
+def _parent_text(analysis: dict) -> str:
+    """채널에 뜨는 메인 메시지 — 타이틀 + 점검 요약만 (짧게)."""
     target_date = analysis.get("date") or config.yesterday_str()
     try:
         report_d = datetime.strptime(target_date[:10], "%Y-%m-%d") + timedelta(days=1)
@@ -298,32 +305,46 @@ def generate(analysis: dict) -> str:
     except (TypeError, ValueError):
         report_date_str = target_date
 
-    head = [
-        f"📋 일일 경영지원 일보 — {report_date_str[:4]}년 {_kdate(report_date_str)}",
+    lines = [
+        f"📋 *일일 경영지원 일보* — {report_date_str[:4]}년 {_kdate(report_date_str)}",
         f"대상 기간: {_kdate(target_date)}",
-        "",
     ]
     if analysis.get("error"):
-        head.append(f"⚠️ 분석 일부 제한: {analysis['error']}")
-        head.append("")
+        lines.append(f"⚠️ 분석 일부 제한: {analysis['error']}")
 
     counts = _issue_counts(analysis)
     total = sum(counts.values())
     if total == 0:
-        head.append("✅ 오늘 점검 사항 없음. 정상 운영 중")
+        lines.append("✅ 오늘 점검 사항 없음. 정상 운영 중")
     else:
         brk = " · ".join(f"{k} {v}" for k, v in counts.items())
-        head.append(f"⚠️ 오늘 점검 필요 {total}건 — {brk}")
+        lines.append(f"⚠️ 오늘 점검 필요 {total}건 — {brk}")
+    lines.append("🧵 상세는 스레드 참고")
+    return "\n".join(lines)
 
-    sections = (
-        _deposit_section(analysis.get("deposit") or {})
-        + [""] + _lunch_section(analysis.get("lunch") or {})
-        + [""] + _non_lunch_section(analysis.get("non_lunch") or {})
-        + [""] + _attendance_section(analysis.get("attendance") or {})
-        + [""] + _leaves_section(analysis.get("leaves") or {})
-        + [""] + _summary_section(analysis.get("attendance_summary") or {})
-    )
-    return "\n".join(head + [""] + sections)
+
+def build(analysis: dict):
+    """분석 결과 dict → (parent_text, [section_text, ...]).
+
+    parent_text는 채널 메인 메시지, 리스트는 스레드에 섹션별로 달릴 상세.
+    """
+    analysis = _filter_issues(analysis)
+    parent = _parent_text(analysis)
+    sections = [
+        "\n".join(_deposit_section(analysis.get("deposit") or {})),
+        "\n".join(_lunch_section(analysis.get("lunch") or {})),
+        "\n".join(_non_lunch_section(analysis.get("non_lunch") or {})),
+        "\n".join(_attendance_section(analysis.get("attendance") or {})),
+        "\n".join(_leaves_section(analysis.get("leaves") or {})),
+        "\n".join(_summary_section(analysis.get("attendance_summary") or {})),
+    ]
+    return parent, sections
+
+
+def generate(analysis: dict) -> str:
+    """parent + 모든 섹션을 합친 단일 텍스트 (하위호환 / fallback용)."""
+    parent, sections = build(analysis)
+    return "\n\n".join([parent] + sections)
 
 
 if __name__ == "__main__":
@@ -332,4 +353,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[reporter] stdin JSON 파싱 실패: {e}", file=sys.stderr)
         sys.exit(1)
-    print(generate(data))
+    parent, sections = build(data)
+    print(parent)
+    for s in sections:
+        print("\n--- (스레드) ---")
+        print(s)

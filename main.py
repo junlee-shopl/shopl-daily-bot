@@ -51,19 +51,21 @@ def run() -> int:
         print(f"[main] analyzer 실패: {type(e).__name__}: {e}", file=sys.stderr)
         analysis = {"date": date_str, "error": f"{type(e).__name__}: {e}"}
 
-    # 3) 일보 텍스트 생성
+    # 3) 일보 텍스트 생성 (parent + 섹션별 스레드 본문)
+    parent_text, section_texts = None, None
     try:
-        report_text = reporter.generate(analysis)
+        parent_text, section_texts = reporter.build(analysis)
     except Exception as e:
         print(f"[main] reporter 실패: {type(e).__name__}: {e}", file=sys.stderr)
-        report_text = (
+        parent_text = (
             f"📋 일일 경영지원 일보 ({date_str})\n\n"
             f"⚠️ 오늘 일보 생성 실패. 로그 확인 필요.\n({type(e).__name__}: {e})"
         )
+        section_texts = []
 
-    # 4) 발송 (DRY_RUN이면 slack_sender가 stdout 출력)
+    # 4) 발송 — 메인은 채널에, 섹션 상세는 스레드에 (DRY_RUN이면 stdout 미리보기)
     try:
-        slack_sender.send(report_text)
+        slack_sender.send_threaded(parent_text, section_texts)
     except Exception as e:
         print(f"[main] Slack 발송 실패: {e}", file=sys.stderr)
         return 1

@@ -22,28 +22,24 @@ except ImportError:  # pragma: no cover
     SlackApiError = Exception
 
 
-def send(text: str) -> bool:
-    """일보 텍스트를 Slack에 발송. DRY_RUN이면 stdout 출력만.
-
-    성공 시 True, 실패 시 예외.
-    """
-    if config.DRY_RUN:
-        print("[DRY_RUN] 다음 내용이 발송될 예정:")
-        print(text)
-        return True
-
+def _client():
+    """발송 가능 상태 검증 후 WebClient 반환."""
     if WebClient is None:
         raise RuntimeError("slack_sdk 패키지가 설치되지 않았습니다. pip install slack-sdk")
     if not config.SLACK_BOT_TOKEN:
         raise RuntimeError("SLACK_BOT_TOKEN 이 .env에 없습니다.")
     if not config.SLACK_CHANNEL:
         raise RuntimeError("SLACK_CHANNEL 이 .env에 없습니다.")
+    return WebClient(token=config.SLACK_BOT_TOKEN)
 
-    client = WebClient(token=config.SLACK_BOT_TOKEN)
+
+def _post(client, text: str, thread_ts: str = None) -> str:
+    """한 건 발송. 성공 시 메시지 ts 반환, 실패 시 예외."""
     try:
         resp = client.chat_postMessage(
             channel=config.SLACK_CHANNEL,
             text=text,
+            thread_ts=thread_ts,
             unfurl_links=False,
             unfurl_media=False,
         )
@@ -54,6 +50,42 @@ def send(text: str) -> bool:
 
     if not resp.get("ok", False):
         raise RuntimeError(f"Slack 발송 실패: {resp.get('error', 'unknown')}")
+    return resp.get("ts")
+
+
+def send(text: str) -> bool:
+    """단일 텍스트를 Slack에 발송. DRY_RUN이면 stdout 출력만.
+
+    성공 시 True, 실패 시 예외. (fallback / 단독 실행용)
+    """
+    if config.DRY_RUN:
+        print("[DRY_RUN] 다음 내용이 발송될 예정:")
+        print(text)
+        return True
+
+    _post(_client(), text)
+    return True
+
+
+def send_threaded(parent_text: str, section_texts: list) -> bool:
+    """메인 메시지를 채널에 보내고, 각 섹션을 그 스레드에 단다.
+
+    채널에는 parent_text(타이틀+요약)만 뜨고 상세는 스레드로 들어가 모바일 부담을 줄인다.
+    DRY_RUN이면 발송 없이 stdout으로 구조를 미리보기. 성공 시 True, 실패 시 예외.
+    """
+    if config.DRY_RUN:
+        print("[DRY_RUN] 채널 메인 메시지:")
+        print(parent_text)
+        for i, s in enumerate(section_texts, 1):
+            print(f"\n[DRY_RUN] 스레드 댓글 {i}:")
+            print(s)
+        return True
+
+    client = _client()
+    parent_ts = _post(client, parent_text)
+    for s in section_texts:
+        if s and s.strip():
+            _post(client, s, thread_ts=parent_ts)
     return True
 
 
