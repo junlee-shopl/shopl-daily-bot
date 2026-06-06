@@ -15,41 +15,81 @@ import sys
 
 import config
 import analyzer
+import expense_audit
 import reporter
 import slack_sender
 from collectors import gowid, popbill, shopl
 
 
-def _run_collector(name: str, fn, date_str: str) -> dict:
+def _safe(name: str, fn, *args):
     try:
-        return fn(date_str)
+        return fn(*args)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
-        print(f"[main] collector '{name}' 전체 실패: {msg}", file=sys.stderr)
+        print(f"[main] '{name}' 전체 실패: {msg}", file=sys.stderr)
         return {"_error": msg}
 
 
-def collect_all(date_str: str) -> dict:
-    return {
-        "date": date_str,
-        "shopl": _run_collector("shopl", shopl.collect, date_str),
-        "gowid": _run_collector("gowid", gowid.collect, date_str),
-        "popbill": _run_collector("popbill", popbill.collect, date_str),
-    }
+def _ymd(d: str) -> str:
+    return d.replace("-", "")
 
 
 def run() -> int:
-    date_str = config.yesterday_str()
+    plan = config.report_plan()
 
-    # 1) 데이터 수집
-    raw = collect_all(date_str)
+    # 주말(토/일)은 발송하지 않는다 — 월요일에 금요일치를 본다.
+    if plan.get("skip"):
+        print(f"[main] {plan['run_date']} 주말 — 일보 미발송", file=sys.stderr)
+        return 0
 
-    # 2) AI 분석 (실패해도 빈 결과로 진행)
+    daily_dates = plan["daily_dates"]
+    date_str = daily_dates[-1]
+    daily_ymd = {_ymd(d) for d in daily_dates}
+
+    # 1) 데이터 수집 (월요일=금~일 범위, 그 외 어제 하루)
+    shopl_data = _safe("shopl", shopl.collect_range, daily_dates)
+    gowid_data = _safe("gowid", gowid.collect_range, plan["fetch_start"], plan["fetch_end"],
+                       plan.get("is_weekly", False))
+    popbill_data = _safe("popbill", popbill.collect_range, plan["fetch_start"], plan["fetch_end"])
+
+    # 고위드 expenses: LLM(점심 외 카드/근태)에는 '일일 범위'만, 식대 코드 점검도 일일 범위.
+    all_expenses = gowid_data.get("expenses") or []
+    daily_expenses = [e for e in all_expenses if e.get("expenseDate") in daily_ymd]
+    purposes = gowid_data.get("purposes") or []
+
+    raw = {
+        "date": date_str,
+        "daily_dates": daily_dates,
+        "shopl": shopl_data,
+        "gowid": {"members": gowid_data.get("members"), "purposes": purposes,
+                  "expenses": daily_expenses},
+        "popbill": popbill_data,
+    }
+
+    # 2) AI 분석 (근태/휴가/입금/점심외카드). 점심·식대는 아래에서 코드로 덮어쓴다.
     try:
         analysis = analyzer.analyze(raw)
     except Exception as e:
         print(f"[main] analyzer 실패: {type(e).__name__}: {e}", file=sys.stderr)
         analysis = {"date": date_str, "error": f"{type(e).__name__}: {e}"}
+
+    # 2-1) 식대 점검 — 결정적 코드로 덮어쓰기 (LLM 비결정성 제거).
+    try:
+        analysis["lunch"] = expense_audit.audit_daily(daily_expenses, purposes, daily_dates)
+    except Exception as e:
+        print(f"[main] expense_audit(daily) 실패: {type(e).__name__}: {e}", file=sys.stderr)
+
+    # 2-2) 주간 점검(월요일) — 전주 미제출 + 중복사용.
+    if plan.get("is_weekly"):
+        try:
+            analysis["weekly"] = expense_audit.audit_weekly(
+                all_expenses, gowid_data.get("not_submitted"), purposes,
+                plan["weekly_start"], plan["weekly_end"])
+        except Exception as e:
+            print(f"[main] expense_audit(weekly) 실패: {type(e).__name__}: {e}", file=sys.stderr)
+
+    analysis["daily_dates"] = daily_dates
+    analysis["run_date"] = plan["run_date"]
 
     # 3) 일보 텍스트 생성 (parent + 섹션별 스레드 본문)
     parent_text, section_texts = None, None

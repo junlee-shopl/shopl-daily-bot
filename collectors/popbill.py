@@ -38,15 +38,24 @@ def _service() -> "EasyFinBankService":
     return svc
 
 
-def collect(date_str: str | None = None) -> dict:
-    """어제(또는 지정일) IBK 입금내역을 수집해 dict로 반환.
+def collect_range(start_date: str, end_date: str) -> dict:
+    """[start_date, end_date] 범위 IBK 입금내역 수집 (월요일=금~일 대응)."""
+    return collect(start_date, end_date)
 
-    date_str: 'YYYY-MM-DD'. 미지정 시 KST 기준 어제.
+
+def collect(date_str: str | None = None, end_date: str | None = None) -> dict:
+    """입금내역을 수집해 dict로 반환.
+
+    date_str: 시작일 'YYYY-MM-DD' (미지정 시 KST 어제).
+    end_date: 종료일. 미지정 시 date_str 과 동일(단일일).
     반환: {"date", "deposits": [...], "raw_count", "error"?}
     """
     if date_str is None:
         date_str = config.yesterday_str()
-    ymd = date_str.replace("-", "")  # 팝빌 날짜 형식: yyyyMMdd
+    if end_date is None:
+        end_date = date_str
+    ymd = date_str.replace("-", "")        # 팝빌 날짜 형식: yyyyMMdd
+    ymd_end = end_date.replace("-", "")
 
     corp = config.POPBILL_CORP_NUM
     bank = config.POPBILL_BANK_CODE
@@ -54,8 +63,8 @@ def collect(date_str: str | None = None) -> dict:
 
     svc = _service()
 
-    # 1) 수집 작업 요청
-    job_id = svc.requestJob(corp, bank, acct, ymd, ymd)
+    # 1) 수집 작업 요청 (시작~종료 범위)
+    job_id = svc.requestJob(corp, bank, acct, ymd, ymd_end)
 
     # 2) 작업 완료 폴링
     waited = 0

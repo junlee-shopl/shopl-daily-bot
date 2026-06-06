@@ -95,6 +95,52 @@ def collect(date_str: str | None = None) -> dict:
     return result
 
 
+def collect_range(dates: list) -> dict:
+    """여러 날(daily_dates) 샤플 데이터를 수집해 합친다.
+
+    근태(/api/att/report)는 날짜 파라미터가 단일일이라 날짜별로 호출해 합치고,
+    휴가는 startDate~endDate 범위 1회, 직원목록은 1회만 호출한다.
+    (월요일=금·토·일 합산 대응. 주말 근태는 대개 비어 있다.)
+
+    반환: {"dates", "attendance", "users", "leaves", "errors"}
+    """
+    dates = list(dates) or [config.yesterday_str()]
+    result: dict = {"dates": dates, "attendance": [], "users": [], "leaves": [], "errors": {}}
+
+    # 1) 근태 — 날짜별 호출 후 합치기 (각 행에 reportDate 태깅).
+    for d in dates:
+        try:
+            data = _get("/api/att/report", params={"date": d})
+            rows = _body_list(data) or []
+            for r in rows:
+                if isinstance(r, dict):
+                    r.setdefault("reportDate", d)
+            save_fixture(d, "shopl", "attendance_raw", data)
+            result["attendance"].extend(rows)
+        except Exception as e:
+            result["errors"][f"attendance:{d}"] = f"{type(e).__name__}: {e}"
+
+    # 2) 직원 목록 — 1회.
+    try:
+        cutoff = (config.yesterday_kst() - timedelta(days=365)).strftime("%Y-%m-%d")
+        data = _get("/api/user/list/v2", params={"includeResignedAfterDate": cutoff})
+        save_fixture(dates[-1], "shopl", "users_raw", data)
+        result["users"] = _body_list(data)
+    except Exception as e:
+        result["errors"]["users"] = f"{type(e).__name__}: {e}"
+
+    # 3) 휴가 — 범위 1회.
+    try:
+        data = _get("/api/leave/usage/list",
+                    params={"startDate": dates[0], "endDate": dates[-1]})
+        save_fixture(dates[-1], "shopl", "leaves_raw", data)
+        result["leaves"] = _body_list(data)
+    except Exception as e:
+        result["errors"]["leaves"] = f"{type(e).__name__}: {e}"
+
+    return result
+
+
 if __name__ == "__main__":
     if not config.SHOPL_API_KEY:
         print("[shopl] SHOPL_API_KEY 가 .env에 없습니다.", file=sys.stderr)

@@ -133,14 +133,21 @@ def _deposit_section(dep: dict) -> list:
 
 
 def _lunch_section(lunch: dict) -> list:
-    lines = ["*🍱 점심 식대 점검*"]
+    lines = ["*🍱 식대 점검*"]
     normal = lunch.get("normal") or {}
     n_cnt = normal.get("count", 0)
     n_total = normal.get("total", 0)
     extra = ""
     if normal.get("avg_per_person") not in (None, ""):
         extra = f" (1인당 평균 {_won(normal['avg_per_person'])})"
-    lines.append(f"✅ 정상 사용: {n_cnt}건 / {_won(n_total)}{extra}")
+    lines.append(f"✅ 점심식비 정상: {n_cnt}건 / {_won(n_total)}{extra}")
+
+    # 특수 용도(샤플런치/Project V/플플데이) 사용 요약 — 있으면 표시.
+    by_purpose = lunch.get("by_purpose") or {}
+    for name, info in by_purpose.items():
+        lim = info.get("limit")
+        tail = f" (인당 한도 {_won(lim)})" if lim else ""
+        lines.append(f"• {name}: {info.get('count', 0)}건 / {_won(info.get('total', 0))}{tail}")
 
     issues = lunch.get("issues") or []
     if not issues:
@@ -149,11 +156,9 @@ def _lunch_section(lunch: dict) -> list:
 
     lines.append(f"⚠️ 점검 필요 {len(issues)}건")
     labels = {
-        "solo_over_limit": "1인 한도 초과",
-        "group_avg_over_limit": "참석자 한도 초과",
+        "over_limit": "인당 한도 초과",
         "external_included": "외부 인원 포함",
-        "duplicate_lunch": "중복 점심 의심",
-        "missing_memo": "메모 누락",
+        "missing_memo": "메모 미입력(제출됨)",
     }
     # 타입별 그룹화 (정의된 순서 유지)
     by_type = {}
@@ -171,7 +176,10 @@ def _lunch_section(lunch: dict) -> list:
             t_str = _hhmm(it, "time", "usedAt", "시각")
             amt = _won(_amount(it))
             parts = _participants(it)
+            purpose = _g(it, "purpose")
             head = f"  · {user}".ljust(10) + f"{t_str}  {amt}"
+            if purpose and purpose != "점심식비":
+                head += f" [{purpose}]"
             if parts:
                 head += f" (참석자: {parts})"
             lines.append(head)
@@ -281,6 +289,46 @@ def _summary_section(att_sum: dict) -> list:
     return lines
 
 
+def _weekly_section(weekly: dict) -> list:
+    """주간 점검(월요일) — 전주 미제출 + 중복사용."""
+    rng = weekly.get("range") or ""
+    lines = [f"*🗓️ 주간 점검 (전주 {rng})*"]
+    ns = weekly.get("not_submitted") or []
+    dup = weekly.get("duplicates") or []
+
+    if not ns and not dup:
+        lines.append("✅ 전주 미제출/중복 없음")
+        return lines
+
+    lines.append("")
+    lines.append(f"  [미제출] {len(ns)}건")
+    for it in ns:
+        user = _g(it, "user", default="(미상)")
+        d = _g(it, "date")
+        amt = _won(_amount(it))
+        store = _g(it, "store")
+        row = f"  · {user} · {d} · {amt}"
+        if store:
+            row += f" · {store}"
+        lines.append(row)
+    if not ns:
+        lines.append("  · 없음")
+
+    lines.append("")
+    lines.append(f"  [중복 사용] {len(dup)}건")
+    for it in dup:
+        user = _g(it, "user", default="(미상)")
+        d = _g(it, "date")
+        purpose = _g(it, "purpose")
+        cnt = it.get("count")
+        amts = it.get("amounts") or []
+        amt_str = ", ".join(_won(a) for a in amts)
+        lines.append(f"  · {user} · {d} · {purpose} ×{cnt} ({amt_str})")
+    if not dup:
+        lines.append("  · 없음")
+    return lines
+
+
 # ---------- 메인 ----------
 
 def _issue_counts(analysis: dict) -> dict:
@@ -288,26 +336,39 @@ def _issue_counts(analysis: dict) -> dict:
     lunch = analysis.get("lunch") or {}
     att = analysis.get("attendance") or {}
     lv = analysis.get("leaves") or {}
-    return {
+    counts = {
         "입금": _len(dep.get("unmatched")),
         "식대": _len(lunch.get("issues")),
         "근태": _len(att.get("late")) + _len(att.get("no_show_no_leave")),
         "휴가": _len(lv.get("pending_approval")),
     }
+    weekly = analysis.get("weekly")
+    if weekly:
+        counts["미제출"] = _len(weekly.get("not_submitted"))
+        counts["중복"] = _len(weekly.get("duplicates"))
+    return counts
 
 
 def _parent_text(analysis: dict) -> str:
     """채널에 뜨는 메인 메시지 — 타이틀 + 점검 요약만 (짧게)."""
-    target_date = analysis.get("date") or config.yesterday_str()
-    try:
-        report_d = datetime.strptime(target_date[:10], "%Y-%m-%d") + timedelta(days=1)
-        report_date_str = report_d.strftime("%Y-%m-%d")
-    except (TypeError, ValueError):
-        report_date_str = target_date
+    daily_dates = analysis.get("daily_dates") or [analysis.get("date") or config.yesterday_str()]
+    # 발행일 = 오늘(run_date). 없으면 마지막 대상일 +1 로 추정(하위호환).
+    report_date_str = analysis.get("run_date")
+    if not report_date_str:
+        try:
+            report_d = datetime.strptime(daily_dates[-1][:10], "%Y-%m-%d") + timedelta(days=1)
+            report_date_str = report_d.strftime("%Y-%m-%d")
+        except (TypeError, ValueError):
+            report_date_str = daily_dates[-1]
+
+    if len(daily_dates) == 1:
+        period = _kdate(daily_dates[0])
+    else:
+        period = f"{_kdate(daily_dates[0])} ~ {_kdate(daily_dates[-1])}"
 
     lines = [
         f"📋 *일일 경영지원 일보* — {report_date_str[:4]}년 {_kdate(report_date_str)}",
-        f"대상 기간: {_kdate(target_date)}",
+        f"대상 기간: {period}",
     ]
     if analysis.get("error"):
         lines.append(f"⚠️ 분석 일부 제한: {analysis['error']}")
@@ -338,6 +399,10 @@ def build(analysis: dict):
         "\n".join(_leaves_section(analysis.get("leaves") or {})),
         "\n".join(_summary_section(analysis.get("attendance_summary") or {})),
     ]
+    # 주간 점검(월요일)이 있으면 마지막 스레드 섹션으로 추가.
+    weekly = analysis.get("weekly")
+    if weekly:
+        sections.append("\n".join(_weekly_section(weekly)))
     return parent, sections
 
 

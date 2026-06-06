@@ -129,6 +129,9 @@ def analyze(raw_data: dict) -> dict:
     """통합 JSON을 받아 구조화된 분석 결과 dict를 반환."""
     date_str = raw_data.get("date") or config.yesterday_str()
     today_str = config.now_kst().strftime("%Y-%m-%d")
+    daily_dates = raw_data.get("daily_dates") or [date_str]
+    period = (daily_dates[0] if len(daily_dates) == 1
+              else f"{daily_dates[0]} ~ {daily_dates[-1]} ({len(daily_dates)}일)")
 
     if anthropic is None:
         return _empty(date_str, "anthropic 패키지 미설치")
@@ -141,7 +144,9 @@ def analyze(raw_data: dict) -> dict:
     )
     data_json = json.dumps(_prune(raw_data), ensure_ascii=False, default=str)
     data_msg = (
-        f"대상일(어제): {date_str}\n오늘: {today_str}\n\n"
+        f"대상 기간(어제): {period}\n오늘: {today_str}\n"
+        f"※ 근태/휴가는 위 기간 전체가 합쳐져 있을 수 있다(월요일=금·토·일). "
+        f"점심·식대(lunch) 분류는 코드에서 따로 계산하므로 비워 둬도 된다.\n\n"
         f"## 분석 대상 통합 데이터\n```json\n{data_json}\n```"
     )
 
